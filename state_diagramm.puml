@@ -1,0 +1,57 @@
+@startuml
+skinparam state {
+  BackgroundColor<<Idle>> #E0E0E0
+  BackgroundColor<<Active>> #ADD8E6
+  BackgroundColor<<Critical>> #FFCCCB
+}
+
+title "Single Channel UART State Machine (8x Oversampling)"
+
+state "IDLE (Monitor Global)" as IDLE <<Idle>>
+note left of IDLE
+  Dieser Zustand kostet 0 CPU Cycles
+  im Channel-Kontext.
+  Der "Global Scanner" sucht nach
+  Fallenden Flanken (High -> Low).
+end note
+
+state "VERIFY_START" as START <<Critical>>
+note right of START
+  Zeitpunkt: T0 + 4 Ticks
+  (Mitte des Startbits)
+end note
+
+state "SAMPLE_BITS" as DATA <<Active>>
+note left of DATA
+  Zeitpunkt: T_prev + 8 Ticks
+  Wiederholt sich 8x für Bits 0-7
+end note
+
+state "CHECK_STOP" as STOP <<Active>>
+note right of STOP
+  Zeitpunkt: T_last + 8 Ticks
+  Prüfung auf Framing Error
+end note
+
+[*] --> IDLE
+
+IDLE --> START : **Global Event:**\nFalling Edge Detected\nAction: Schedule(T+4)
+
+state START {
+  state "Pin Low?" as StartCheck
+  StartCheck --> DATA : Yes (Valid Start)\nAction: Schedule(T+8)\nInit BitCounter=0
+  IDLE <--  StartCheck : No (Glitch/Noise)\nAction: Abort
+}
+
+state DATA {
+  state "Shift & Store" as Sampling
+  Sampling --> Sampling : BitCounter < 7\nAction: Schedule(T+8)\nBitCounter++
+  Sampling --> STOP : BitCounter == 7\nAction: Schedule(T+8)
+}
+
+state STOP {
+  state "Pin High?" as StopCheck
+  IDLE <-- StopCheck : Yes (Valid Frame)\nAction: Push to FIFO
+  IDLE <-- StopCheck : No (Framing Error)\nAction: Set Error Flag\nPush to FIFO
+}
+@enduml
